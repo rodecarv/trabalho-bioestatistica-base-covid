@@ -1,0 +1,482 @@
+---
+title: "projeto_principal"
+output: pdf_document
+---
+
+
+# 1. Tratamento dos dados
+
+## 1.1 Carregar os pacotes
+
+```{r pacotes}
+if(!require(readr)) install.packages("readr")
+library(readr)
+
+if(!require(dplyr)) install.packages("dplyr")
+library(dplyr)
+
+if(!require(stringr)) install.packages("stringr")
+library(stringr)
+
+if(!require(summarytools)) install.packages("summarytools")
+library(summarytools)
+
+if(!require(car)) install.packages("car")
+library(car)
+
+if(!require(knitr)) install.packages("knitr")
+library(knitr)
+
+if(!require(kableExtra)) install.packages("kableExtra")
+library(kableExtra)
+
+if(!require(tidyr)) install.packages("tidyr")
+library(tidyr)
+
+if(!require(ggplot2)) install.packages("ggplot2")
+library(ggplot2)
+```
+
+## 1.2 Ler a base de dados
+
+```{r leitura-base}
+obitos <- read_delim(
+  "C:/Users/r00942042/Downloads/Bioestatística-20260416T000533Z-3-001/Bioestatística/obitos-Anonimizados-2912-utf8.csv",
+  delim = ";",
+  col_names = FALSE,
+  locale = locale(encoding = "UTF-8"),
+  trim_ws = TRUE
+)
+
+head(obitos)
+```
+
+## 1.3 Eliminar colunas completamente vazias
+
+```{r colunas-vazias}
+obitos_adaptado <- obitos[, colSums(!is.na(obitos)) > 0]
+head(obitos_adaptado)
+```
+
+## 1.4 Criar a variável idade numérica
+
+```{r criar-idade}
+obitos_adaptado <- obitos_adaptado %>%
+  mutate(
+    idade = as.numeric(str_extract(X2, "\\d+"))
+  )
+
+head(obitos_adaptado)
+```
+
+## 1.5 Criar a variável comorbidade
+
+```{r criar-comorbidade}
+obitos_adaptado <- obitos_adaptado %>%
+  mutate(
+    comorbidade = case_when(
+      is.na(X6) ~ NA_character_,
+      toupper(trimws(X6)) == "SEM COMORBIDADE" ~ "Não",
+      TRUE ~ "Sim"
+    )
+  )
+
+head(obitos_adaptado)
+```
+
+## 1.6 Criar a variável gênero
+
+```{r criar-genero}
+obitos_adaptado <- obitos_adaptado %>%
+  mutate(
+    genero = case_when(
+      toupper(trimws(X1)) %in% c("M", "MASCULINO") ~ "Masculino",
+      toupper(trimws(X1)) %in% c("F", "FEMININO") ~ "Feminino",
+      TRUE ~ as.character(X1)
+    )
+  )
+
+head(obitos_adaptado)
+```
+
+## 1.7 Criar a variável faixa etária
+
+```{r criar-faixa-etaria}
+obitos_adaptado <- obitos_adaptado %>%
+  mutate(
+    faixa_etaria = cut(
+      idade,
+      breaks = c(0, 20, 40, 60, 80, 120),
+      labels = c("0-20", "21-40", "41-60", "61-80", "80+"),
+      include.lowest = TRUE,
+      right = TRUE
+    )
+  )
+
+head(obitos_adaptado)
+```
+
+## 1.8 Base analítica sem valores ausentes nas principais variáveis
+
+```{r base-analitica}
+obitos_validos <- obitos_adaptado %>%
+  filter(!is.na(idade), !is.na(genero), !is.na(comorbidade), !is.na(faixa_etaria))
+
+nrow(obitos_validos)
+```
+
+# 2. Letalidade
+#valor retirado do arquivo Dados gerais no site https://www.saude.ma.gov.br/boletins-covid-19/
+
+```{r letalidade}
+total_obitos <- 11032
+total_casos  <- 487988
+
+letalidade <- (total_obitos / total_casos) * 100
+letalidade
+
+cat("Letalidade = (", format(total_obitos, big.mark = "."), "/", format(total_casos, big.mark = "."), ") × 100\n", sep = "")
+cat("Letalidade =", round(letalidade, 2), "%\n")
+```
+
+# 3. Tabela de frequência da variável comorbidade
+
+```{r frequencia-comorbidade}
+
+
+# removendo os dados vazios da tabela 
+obitos_adaptado_sem_na <- obitos_adaptado %>%
+  filter(!is.na(X1), !is.na(comorbidade))
+
+
+ctable(x = obitos_adaptado_sem_na$X1,
+       y = obitos_adaptado_sem_na$comorbidade,
+       prop = "r",
+       headings = FALSE,
+       report.nas = FALSE)
+```
+
+
+# 4. Frequência do sexo biológico
+
+```{r frequencia-sexo}
+freq_sexo_abs <- table(obitos_adaptado$genero, useNA = "no")
+freq_sexo_rel <- prop.table(freq_sexo_abs) * 100
+
+tabela_sexo <- data.frame(
+  `Sexo Biológico` = names(freq_sexo_abs),
+  `Frequência Absoluta` = as.vector(freq_sexo_abs),
+  `Frequência Relativa` = round(as.vector(freq_sexo_rel), 2),
+  check.names = FALSE
+)
+
+kable(
+  tabela_sexo,
+  caption = "Frequência do sexo biológico",
+  format = "latex",
+  booktabs = FALSE,
+  align = c("l", "c", "c")
+) %>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+# 5. Comorbidade vs. Sexo Biológico
+
+## 5.1 Composição do grupo no total
+
+```{r comp-total-sexo-comorb}
+dados_genero_comorb <- obitos_adaptado %>%
+  filter(!is.na(genero), !is.na(comorbidade))
+
+tabela_gc <- table(dados_genero_comorb$genero, dados_genero_comorb$comorbidade)
+total_gc <- sum(tabela_gc)
+prop_total_gc <- prop.table(tabela_gc) * 100
+
+tabela_gc_total <- data.frame(
+  `Sexo Biológico / Comorbidade` = rownames(tabela_gc),
+  `Não` = paste0(tabela_gc[, "Não"], " - ", format(round(prop_total_gc[, "Não"], 1), decimal.mark = ","), "%"),
+  `Sim` = paste0(tabela_gc[, "Sim"], " - ", format(round(prop_total_gc[, "Sim"], 1), decimal.mark = ","), "%"),
+  `Total` = paste0(rowSums(tabela_gc), " - ", format(round(rowSums(tabela_gc) / total_gc * 100, 1), decimal.mark = ","), "%"),
+  check.names = FALSE
+)
+
+tabela_gc_total <- rbind(
+  tabela_gc_total,
+  data.frame(
+    `Sexo Biológico / Comorbidade` = "Total",
+    `Não` = paste0(sum(tabela_gc[, "Não"]), " - ", format(round(sum(tabela_gc[, "Não"]) / total_gc * 100, 1), decimal.mark = ","), "%"),
+    `Sim` = paste0(sum(tabela_gc[, "Sim"]), " - ", format(round(sum(tabela_gc[, "Sim"]) / total_gc * 100, 1), decimal.mark = ","), "%"),
+    `Total` = paste0(total_gc, " - 100%"),
+    check.names = FALSE
+  )
+)
+
+kable(
+  tabela_gc_total,
+  caption = "Comorbidade vs Sexo Biológico — composição do grupo no total",
+  format = "latex",
+  booktabs = FALSE,
+  align = c("l", "c", "c", "c")
+) %>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+## 5.2 Comparação entre grupos dentro de cada sexo
+
+```{r comp-linha-sexo-comorb}
+prop_linha_gc <- prop.table(tabela_gc, margin = 1) * 100
+
+tabela_gc_linha <- data.frame(
+  `Sexo Biológico / Comorbidade` = rownames(tabela_gc),
+  `Não` = paste0(tabela_gc[, "Não"], " - ", format(round(prop_linha_gc[, "Não"], 1), decimal.mark = ","), "%"),
+  `Sim` = paste0(tabela_gc[, "Sim"], " - ", format(round(prop_linha_gc[, "Sim"], 1), decimal.mark = ","), "%"),
+  `Total` = paste0(rowSums(tabela_gc), " - 100%"),
+  check.names = FALSE
+)
+
+tabela_gc_linha <- rbind(
+  tabela_gc_linha,
+  data.frame(
+    `Sexo Biológico / Comorbidade` = "Total",
+    `Não` = paste0(sum(tabela_gc[, "Não"]), " - ", format(round(sum(tabela_gc[, "Não"]) / total_gc * 100, 1), decimal.mark = ","), "%"),
+    `Sim` = paste0(sum(tabela_gc[, "Sim"]), " - ", format(round(sum(tabela_gc[, "Sim"]) / total_gc * 100, 1), decimal.mark = ","), "%"),
+    `Total` = paste0(total_gc, " - 100%"),
+    check.names = FALSE
+  )
+)
+
+kable(
+  tabela_gc_linha,
+  caption = "Comorbidade vs Sexo Biológico — comparação entre grupos",
+  format = "latex",
+  booktabs = FALSE,
+  align = c("l", "c", "c", "c")
+) %>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+## 5.3 Testes estatísticos — comorbidade vs sexo biológico
+
+```{r testes-sexo-comorb}
+qui_genero_comorb <- chisq.test(tabela_gc)
+qui_genero_comorb
+
+prop_genero_comorb <- prop.test(tabela_gc)
+prop_genero_comorb
+```
+
+# 6. Medidas de tendência central e de dispersão para a idade
+
+```{r resumo-idade}
+media_idade   <- mean(obitos_adaptado$idade, na.rm = TRUE)
+mediana_idade <- median(obitos_adaptado$idade, na.rm = TRUE)
+dp_idade      <- sd(obitos_adaptado$idade, na.rm = TRUE)
+
+cat("Média da idade =", round(media_idade, 2), "anos\n")
+cat("Mediana da idade =", round(mediana_idade, 2), "anos\n")
+cat("Desvio padrão da idade =", round(dp_idade, 2), "anos\n")
+```
+
+```{r histogramas-boxplot-idade, fig.height=4.5}
+par(mfrow = c(1, 2))
+
+hist(
+  obitos_adaptado$idade,
+  breaks = 20,
+  main = "Histograma da idade",
+  xlab = "Idade (anos)",
+  ylab = "Frequência",
+  col = "lightblue",
+  border = "black"
+)
+
+boxplot(
+  idade ~ comorbidade,
+  data = obitos_adaptado,
+  main = "Idade por presença de comorbidade",
+  xlab = "Comorbidade",
+  ylab = "Idade (anos)",
+  col = c("lightgreen", "orange")
+)
+
+par(mfrow = c(1, 1))
+```
+
+# 7. Correlação entre Idade e Comorbidade
+
+## 7.1 Teste de normalidade de Shapiro-Wilk
+
+```{r shapiro-idade}
+idade_sem_na <- na.omit(obitos_adaptado$idade)
+
+cat("Número de observações válidas de idade:", length(idade_sem_na), "\n")
+
+set.seed(123)
+
+if (length(idade_sem_na) > 5000) {
+  cat("A amostra possui mais de 5000 observações. Será usada uma amostra aleatória de 5000 casos para o teste de Shapiro-Wilk.\n")
+  idade_shapiro <- sample(idade_sem_na, 5000)
+} else {
+  idade_shapiro <- idade_sem_na
+}
+
+teste_shapiro <- shapiro.test(idade_shapiro)
+teste_shapiro
+```
+
+```{r visualizacao-normalidade}
+qqnorm(
+  idade_sem_na,
+  main = "Avaliação da normalidade da variável idade",
+  xlab = "Quantis teóricos",
+  ylab = "Quantis observados"
+)
+qqline(idade_sem_na, col = "red")
+```
+
+## 7.2 Associação entre faixa etária e comorbidade
+
+```{r qui-faixa-comorb}
+tabela_fc <- table(obitos_adaptado$faixa_etaria, obitos_adaptado$comorbidade)
+chisq_faixa_comorb <- chisq.test(tabela_fc)
+chisq_faixa_comorb
+
+prop.table(tabela_fc, margin = 1)
+```
+
+# 8. Faixa Etária e Sexo Biológico
+
+## 8.1 ANOVA de um fator para comparar idade entre os sexos
+
+```{r anova-sexo}
+anova_sexo <- aov(idade ~ genero, data = obitos_adaptado)
+summary(anova_sexo)
+```
+
+## 8.2 Normalidade dos resíduos da ANOVA
+
+```{r normalidade-residuos-anova}
+residuos_anova_sexo <- na.omit(residuals(anova_sexo))
+
+set.seed(123)
+
+if (length(residuos_anova_sexo) > 5000) {
+  residuos_shapiro <- sample(residuos_anova_sexo, 5000)
+} else {
+  residuos_shapiro <- residuos_anova_sexo
+}
+
+shapiro.test(residuos_shapiro)
+```
+
+## 8.3 Homogeneidade de variâncias
+
+```{r homogeneidade-sexo}
+var.test(idade ~ genero, data = obitos_adaptado)
+```
+
+## 8.4 Médias de idade por sexo
+
+```{r medias-sexo}
+tapply(obitos_adaptado$idade, obitos_adaptado$genero, mean, na.rm = TRUE)
+```
+
+## 8.5 Histogramas de idade por sexo
+
+```{r histogramas-sexo, fig.height=4.5}
+par(mfrow = c(1, 2))
+
+hist(
+  obitos_adaptado$idade[obitos_adaptado$genero == "Feminino"],
+  main = "Histograma de óbitos por idade - Feminino",
+  xlab = "Idade (anos)",
+  ylab = "Frequência",
+  col = "lightblue",
+  border = "black"
+)
+
+hist(
+  obitos_adaptado$idade[obitos_adaptado$genero == "Masculino"],
+  main = "Histograma de óbitos por idade - Masculino",
+  xlab = "Idade (anos)",
+  ylab = "Frequência",
+  col = "lightpink",
+  border = "black"
+)
+
+par(mfrow = c(1, 1))
+```
+
+# 9. Faixa Etária, Sexo Biológico e Comorbidade
+
+## 9.1 Tabela de distribuição conjunta
+
+```{r tabela-3-variaveis}
+dados_tabela3 <- obitos_adaptado %>%
+  filter(!is.na(genero), !is.na(comorbidade), !is.na(faixa_etaria))
+
+total_geral_t3 <- nrow(dados_tabela3)
+
+tabela3_base <- dados_tabela3 %>%
+  count(genero, comorbidade, faixa_etaria) %>%
+  complete(genero, comorbidade, faixa_etaria, fill = list(n = 0)) %>%
+  mutate(
+    percentual = round((n / total_geral_t3) * 100, 2),
+    valor = paste0(
+      n, " - ",
+      format(percentual, decimal.mark = ",", nsmall = 2),
+      "%"
+    )
+  ) %>%
+  select(genero, comorbidade, faixa_etaria, valor) %>%
+  pivot_wider(names_from = faixa_etaria, values_from = valor) %>%
+  arrange(genero, comorbidade)
+
+kable(
+  tabela3_base,
+  caption = "Distribuição por faixa etária, sexo biológico e comorbidade",
+  format = "pipe",
+  booktabs = FALSE,
+  align = c("l", "l", "c", "c", "c", "c", "c")
+) %>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+## 9.2 Proporções por faixa etária
+
+```{r proporcoes-3-variaveis}
+freq_table <- table(
+  Sexo = obitos_adaptado$genero,
+  Comorbidade = obitos_adaptado$comorbidade,
+  Faixa_Idade = obitos_adaptado$faixa_etaria
+)
+
+prop.table(freq_table, margin = 3)
+```
+
+## 9.3 ANOVA de dois fatores (sexo e comorbidade)
+
+```{r anova-2fatores}
+anova_2fatores <- aov(idade ~ genero * comorbidade, data = obitos_adaptado)
+summary(anova_2fatores)
+```
+
+## 9.4 Visualização gráfica da distribuição de comorbidades dentro do gênero por faixa etária
+
+```{r heatmap-comorbidade-genero-faixa, fig.height=5.5}
+heatmap_dados <- dados_tabela3 %>%
+  count(genero, comorbidade, faixa_etaria)
+
+ggplot(heatmap_dados, aes(x = faixa_etaria, y = genero, fill = n)) +
+  geom_tile() +
+  facet_wrap(~ comorbidade) +
+  labs(
+    title = "Distribuição de comorbidades dentro do gênero por faixa etária",
+    x = "Faixa etária",
+    y = "Sexo",
+    fill = "Freq"
+  ) +
+  theme_minimal()
+```
+
+
